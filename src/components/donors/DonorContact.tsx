@@ -138,7 +138,7 @@ const DonorContact = () => {
                   <SelectValue placeholder="Any blood type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Any blood type</SelectItem>
+                  <SelectItem value="any">Any blood type</SelectItem>
                   <SelectItem value="A+">A+</SelectItem>
                   <SelectItem value="A-">A-</SelectItem>
                   <SelectItem value="B+">B+</SelectItem>
