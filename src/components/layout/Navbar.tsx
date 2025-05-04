@@ -1,8 +1,7 @@
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
-import { useAlerts } from "@/contexts/AlertContext";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
@@ -19,28 +18,43 @@ import {
 
 const Navbar = () => {
   const { user, logout } = useAuth();
-  const { alerts } = useAlerts();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const [alertCount, setAlertCount] = useState(0);
 
-  const activeAlerts = alerts.filter(alert => alert.active).length;
-  
   const isActive = (path: string) => location.pathname === path;
-  
+
   const userLinks = [
     { name: "Dashboard", path: "/dashboard" },
     { name: "Alerts", path: "/alerts" },
     { name: "Become a Donor", path: "/donor-registration" },
   ];
-  
+
   const adminLinks = [
     { name: "Dashboard", path: "/admin/dashboard" },
     { name: "Predictions", path: "/admin/predictions" },
     { name: "Alerts", path: "/admin/alerts" },
     { name: "Donors", path: "/admin/donors" },
   ];
-  
+
   const navLinks = user?.role === "admin" ? adminLinks : userLinks;
+
+  useEffect(() => {
+    const fetchAlertCount = async () => {
+      try {
+        const res = await axios.get("http://localhost:5000/api/alerts/count", {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        });
+        setAlertCount(res.data.activeAlertCount || 0);
+      } catch (error) {
+        console.error("Error fetching alert count:", error);
+      }
+    };
+
+    if (user) fetchAlertCount();
+  }, [user]);
 
   return (
     <nav className="border-b">
@@ -49,7 +63,7 @@ const Navbar = () => {
           <Link to="/" className="text-xl font-bold text-primary">
             Health Guardian Network
           </Link>
-          
+
           <div className="hidden md:flex gap-6">
             {user && navLinks.map((link) => (
               <Link
@@ -60,14 +74,14 @@ const Navbar = () => {
                 }`}
               >
                 {link.name}
-                {link.name === "Alerts" && activeAlerts > 0 && (
-                  <Badge className="ml-1 bg-alert-500 text-white">{activeAlerts}</Badge>
+                {link.name === "Alerts" && alertCount > 0 && (
+                  <Badge className="ml-1 bg-alert-500 text-white">{alertCount}</Badge>
                 )}
               </Link>
             ))}
           </div>
         </div>
-        
+
         <div className="flex items-center gap-4">
           {user ? (
             <>
@@ -92,9 +106,7 @@ const Navbar = () => {
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to="/profile">
-                      Profile Settings
-                    </Link>
+                    <Link to="/profile">Profile Settings</Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={logout}>
@@ -103,8 +115,7 @@ const Navbar = () => {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              
-              {/* Mobile menu trigger */}
+
               <Sheet open={isOpen} onOpenChange={setIsOpen}>
                 <SheetTrigger asChild>
                   <Button variant="ghost" size="icon" className="md:hidden">
@@ -132,8 +143,8 @@ const Navbar = () => {
                           onClick={() => setIsOpen(false)}
                         >
                           {link.name}
-                          {link.name === "Alerts" && activeAlerts > 0 && (
-                            <Badge className="ml-2 bg-alert-500 text-white">{activeAlerts}</Badge>
+                          {link.name === "Alerts" && alertCount > 0 && (
+                            <Badge className="ml-2 bg-alert-500 text-white">{alertCount}</Badge>
                           )}
                         </Link>
                       ))}

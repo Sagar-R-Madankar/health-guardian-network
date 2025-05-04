@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
+const twilio = require('twilio');
 // Initialize Express
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -16,6 +16,15 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+
+// ✅ Replace these with your actual Twilio credentials
+const accountSid = 'ACa2c712d5466b693f2f58b8fc7017ab67'; // Your Twilio account SID
+const authToken = 'ec465d7d360cd79a4243f52a3c34c02b'; // Your Twilio Auth Token
+const twilioPhone = '+13024965397'; // Your Twilio phone number (E.164 format)
+
+const twilioClient = twilio(accountSid, authToken); // Twilio client initialized here
+
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -44,10 +53,10 @@ const upload = multer({
 
 // Database configuration
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'password',
-  database: process.env.DB_NAME || 'health_guardian_db',
+  host: 'localhost',
+  user: 'root',
+  password: 'Pass@9096681207',
+  database: 'health_guardian_db',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
@@ -102,17 +111,17 @@ async function initializeDatabase() {
     
     await connection.query(`
       CREATE TABLE IF NOT EXISTS alerts (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        title VARCHAR(255) NOT NULL,
-        message TEXT NOT NULL,
-        disease_id INT NOT NULL,
-        severity ENUM('low', 'medium', 'high') NOT NULL,
-        active BOOLEAN DEFAULT TRUE,
-        created_by INT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (disease_id) REFERENCES diseases(id),
-        FOREIGN KEY (created_by) REFERENCES users(id)
-      );
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    disease_id INT NOT NULL,
+    severity ENUM('low', 'medium', 'high') NOT NULL,
+    active BOOLEAN DEFAULT TRUE,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (disease_id) REFERENCES diseases(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
     `);
     
     await connection.query(`
@@ -333,6 +342,43 @@ app.get('/api/user', authenticateToken, async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
+app.put('/api/user', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { name, email, location } = req.body;
+
+    const connection = await pool.getConnection();
+
+    // Update basic user info
+    await connection.query(
+      'UPDATE users SET name = ?, email = ? WHERE id = ?',
+      [name, email, userId]
+    );
+
+    // If location is provided, update donor table
+    if (location && location.lat && location.lng) {
+      const [donorRows] = await connection.query(
+        'SELECT * FROM donors WHERE user_id = ?',
+        [userId]
+      );
+
+      if (donorRows.length > 0) {
+        // Update donor's location
+        await connection.query(
+          'UPDATE donors SET lat = ?, lng = ? WHERE user_id = ?',
+          [location.lat, location.lng, userId]
+        );
+      }
+    }
+
+    connection.release();
+
+    return res.status(200).json({ message: 'Profile updated successfully' });
+  } catch (error) {
+    console.error('Update user error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 // Register as donor
 app.post('/api/donors', authenticateToken, async (req, res) => {
@@ -432,6 +478,28 @@ app.get('/api/donors', authenticateToken, async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
+//Donor Counts
+app.get('/api/donorcount', authenticateToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+
+    const [total] = await connection.query('SELECT COUNT(*) as total FROM donors');
+    const [blood] = await connection.query('SELECT COUNT(*) as blood FROM donors WHERE blood_type IS NOT NULL');
+    const [organ] = await connection.query('SELECT COUNT(*) as organ FROM donors WHERE organ_donor = 1');
+
+    connection.release();
+
+    return res.status(200).json({
+      totalDonors: total[0].total,
+      bloodDonors: blood[0].blood,
+      organDonors: organ[0].organ,
+    });
+  } catch (error) {
+    console.error('Get donor count error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 // Contact donor
 app.post('/api/donors/:id/contact', authenticateToken, isAdmin, async (req, res) => {
@@ -439,94 +507,123 @@ app.post('/api/donors/:id/contact', authenticateToken, isAdmin, async (req, res)
     const { id } = req.params;
     const { message } = req.body;
     const adminId = req.user.id;
-    
+
     if (!message) {
       return res.status(400).json({ message: 'Message is required' });
     }
-    
+
     const connection = await pool.getConnection();
-    
-    // Find donor
+
+    // 🔍 Find donor
     const [donors] = await connection.query('SELECT * FROM donors WHERE id = ?', [id]);
-    
+
     if (donors.length === 0) {
       connection.release();
       return res.status(404).json({ message: 'Donor not found' });
     }
-    
+
     const donor = donors[0];
-    
-    // Create notification
+
+    // 📝 Save internal notification
     await connection.query(
       `INSERT INTO notifications 
        (type, recipient_id, sender_id, message, reference_id)
        VALUES (?, ?, ?, ?, ?)`,
       ['contact', donor.user_id, adminId, message, donor.id]
     );
-    
+
     connection.release();
-    
-    // In a real app, you would send SMS/email here
-    
-    return res.status(200).json({ message: 'Donor contacted successfully' });
+
+    const sanitizedPhone = donor.phone.replace(/\D/g, ""); // remove non-numeric characters
+    const fullPhone = `+91${sanitizedPhone}`;
+
+    // 📲 Send SMS using Twilio
+    await twilioClient.messages.create({
+      body: message, // Using the correct variable 'message'
+      from: twilioPhone,
+      to: fullPhone
+    });
+
+    return res.status(200).json({ message: 'Donor contacted successfully via SMS' });
   } catch (error) {
     console.error('Contact donor error:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 // Run disease prediction model
 app.post('/api/predictions', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'CSV file is required' });
     }
-    
+
     const filePath = req.file.path;
-    
-    // Run Python script as a separate process
-    const python = spawn('python', ['model.py', filePath]);
-    
+    console.log("Before Model is Running", filePath);
+
+    // Run the Python script
+    const python = spawn('python', ['model.py', filePath], {
+      cwd: path.join(__dirname) // Optional, if model.py is in subfolder
+    });
+
     let predictions = '';
-    
+
     python.stdout.on('data', (data) => {
       predictions += data.toString();
+      console.log("Predictions data received:", data.toString());
     });
-    
+
     python.stderr.on('data', (data) => {
       console.error(`Python error: ${data}`);
     });
-    
+
     python.on('close', async (code) => {
       if (code !== 0) {
         return res.status(500).json({ message: 'Error running prediction model' });
       }
-      
+
+      console.log('Predictions received from Python script:', predictions);
+
+      if (!predictions.trim()) {
+        return res.status(500).json({ message: 'No predictions received from Python script' });
+      }
+
       try {
-        const results = JSON.parse(predictions);
+        const parsed = JSON.parse(predictions.trim());
         
-        // Save predictions to database
         const connection = await pool.getConnection();
+try {
+  for (const result of parsed.flat()) {
+    const { disease, probability, location } = result;
+
+    if (Number(probability) > 0.1) {
+      console.log('Inserting into database:', { disease, probability, location });
+
+      try {
+        await connection.query(
+          `INSERT INTO diseases (name, probability, location, details)
+           VALUES (?, ?, ?, ?)`,
+          [disease, probability, location || null, '']
+        );
+      } catch (dbError) {
+        console.error('Error inserting into diseases table:', dbError);
+      }
+    } else {
+      console.log('Skipping low probability result:', result);
+    }
+  }
+} finally {
+  connection.release();
+}
+
         
-        for (const result of results.flat()) {
-          if (result.probability > 0.5) { // Only save significant predictions
-            await connection.query(
-              `INSERT INTO diseases (name, probability, location, details)
-               VALUES (?, ?, ?, ?)`,
-              [result.disease, result.probability, result.location || null, '']
-            );
-          }
-        }
         
-        connection.release();
-        
-        // Delete the uploaded file
-        fs.unlinkSync(filePath);
-        
-        return res.status(200).json({ predictions: results });
-      } catch (error) {
-        console.error('Prediction processing error:', error);
-        return res.status(500).json({ message: 'Error processing prediction results' });
+        // 👈 Parse safely
+        fs.unlinkSync(filePath); // Clean up uploaded file
+
+        return res.status(200).json({ predictions: parsed }); // 👈 Send JSON to frontend
+      } catch (jsonError) {
+        console.error('Error parsing JSON from Python script:', jsonError);
+        return res.status(500).json({ message: 'Invalid JSON received from Python script' });
       }
     });
   } catch (error) {
@@ -568,10 +665,19 @@ app.post('/api/alerts', authenticateToken, isAdmin, async (req, res) => {
     const { title, message, diseaseId, severity } = req.body;
     const adminId = req.user.id;
     
+    // Debugging received data
+    console.log("Received data:", req.body);
+
+    // Validation
     if (!title || !message || !diseaseId || !severity) {
       return res.status(400).json({ message: 'Title, message, disease ID and severity are required' });
     }
-    
+
+    // Check if diseaseId is a valid string
+    if (typeof diseaseId !== 'string' || !diseaseId.trim()) {
+      return res.status(400).json({ message: 'Invalid disease ID' });
+    }
+
     const connection = await pool.getConnection();
     
     // Check if disease exists
@@ -612,6 +718,7 @@ app.post('/api/alerts', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
+
 // Get alerts
 app.get('/api/alerts', authenticateToken, async (req, res) => {
   try {
@@ -650,6 +757,24 @@ app.get('/api/alerts', authenticateToken, async (req, res) => {
     return res.status(200).json({ alerts: formattedAlerts });
   } catch (error) {
     console.error('Get alerts error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+app.get('/api/alerts/count', authenticateToken, async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    
+    const [rows] = await connection.query(`
+      SELECT COUNT(*) AS activeAlertCount 
+      FROM alerts 
+      WHERE active = 1
+    `);
+    
+    connection.release();
+    
+    return res.status(200).json({ activeAlertCount: rows[0].activeAlertCount });
+  } catch (error) {
+    console.error('Get active alert count error:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -717,8 +842,46 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
+app.put('/api/alerts/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, message, severity, active } = req.body;
+
+    if (!title || !message || !severity || active === undefined) {
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+
+    const connection = await pool.getConnection();
+    await connection.query(
+      'UPDATE alerts SET title = ?, message = ?, severity = ?, active = ? WHERE id = ?',
+      [title, message, severity, active, id]
+    );
+    connection.release();
+
+    return res.status(200).json({ message: 'Alert updated successfully' });
+  } catch (error) {
+    console.error('Update alert error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 // Mark notification as read
+// Delete alert
+app.delete('/api/alerts/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const connection = await pool.getConnection();
+    await connection.query('DELETE FROM alerts WHERE id = ?', [id]);
+    connection.release();
+
+    return res.status(200).json({ message: 'Alert deleted successfully' });
+  } catch (error) {
+    console.error('Delete alert error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 app.patch('/api/notifications/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -744,3 +907,4 @@ app.patch('/api/notifications/:id', authenticateToken, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+  

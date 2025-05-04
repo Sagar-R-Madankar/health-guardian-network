@@ -1,6 +1,6 @@
 
 import React, { createContext, useState, useContext, useEffect } from 'react';
-
+import axios from 'axios';
 export type Disease = {
   id: string;
   name: string;
@@ -140,34 +140,28 @@ export const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const uploadPredictionData = async (file: File): Promise<Disease[]> => {
     setLoading(true);
     try {
-      // In a real app, this would send the file to your Node.js backend
-      // which would then process it with your ML model
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Mock response from ML model
-      const newDiseases: Disease[] = [
-        {
-          id: `d${Math.random().toString(36).substring(2, 9)}`,
-          name: 'Malaria',
-          probability: 0.78,
-          date: new Date().toISOString(),
-          location: 'Southern Region',
-          details: 'Parasitic infection transmitted by mosquitoes'
+      const formData = new FormData();
+      formData.append('file', file);
+  
+      // Get the token (this depends on how you store your token, e.g., in localStorage or cookies)
+      const token = localStorage.getItem('token');  // Replace with your actual token retrieval method
+  
+      if (!token) {
+        throw new Error('No authentication token found');
+      }
+  
+      // Send the file to the backend with the authentication token
+      const response = await axios.post('http://localhost:5000/api/predictions', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`, // Pass the token in the Authorization header
         },
-        {
-          id: `d${Math.random().toString(36).substring(2, 9)}`,
-          name: 'Hepatitis A',
-          probability: 0.63,
-          date: new Date().toISOString(),
-          location: 'Northern Region',
-          details: 'Viral infection affecting the liver'
-        }
-      ];
-      
-      setPredictedDiseases([...newDiseases, ...predictedDiseases]);
-      return newDiseases;
+      });
+      console.log("Response after training",response)
+      const predictedDiseases = response.data.predictions;
+      setPredictedDiseases([...predictedDiseases, ...predictedDiseases]);
+  
+      return predictedDiseases;
     } catch (error) {
       console.error('Error uploading prediction data:', error);
       throw error;
@@ -175,7 +169,6 @@ export const AlertProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLoading(false);
     }
   };
-
   return (
     <AlertContext.Provider value={{
       alerts,

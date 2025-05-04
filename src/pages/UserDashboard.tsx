@@ -15,7 +15,6 @@ const UserDashboard = () => {
   const { toast } = useToast();
   const [isGettingLocation, setIsGettingLocation] = useState(false);
 
-  // Get user location if not already set
   useEffect(() => {
     if (!user?.location && navigator.geolocation) {
       navigator.permissions.query({ name: 'geolocation' }).then(result => {

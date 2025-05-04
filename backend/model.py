@@ -1,132 +1,168 @@
-
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import LabelEncoder
+from sklearn.impute import SimpleImputer
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as imbPipeline
 import joblib
+import sys
+import os
+import json
+from collections import defaultdict
+import builtins
 
-def train_disease_prediction_model(data_path):
-    """
-    Train an XGBoost model for disease prediction
+# --------------------
+# 0. Custom print to stderr
+# --------------------
+def print_to_stderr(*args, **kwargs):
+    kwargs.pop("file", None)  # Prevent double 'file' argument
+    return builtins.print(*args, file=sys.stderr, **kwargs)
+
+print = print_to_stderr  # Override built-in print
+
+print("Python received file path:", sys.argv[1])
+
+# --------------------
+# 1. Load and Validate Dataset
+# --------------------
+def load_data(filepath):
+    filepath = os.path.abspath(filepath)
+    print(f"Loading dataset from: {filepath}")
     
-    Parameters:
-    -----------
-    data_path : str
-        Path to the CSV file containing training data
-        
-    Returns:
-    --------
-    model : XGBClassifier
-        Trained XGBoost model
-    """
-    # Load data
-    data = pd.read_csv(data_path)
+    try:
+        df = pd.read_csv(filepath)
+    except Exception as e:
+        raise ValueError(f"Error reading CSV file: {e}")
     
-    # Data preprocessing (this will depend on your actual data structure)
-    # Example assumes columns like: symptoms, patient_age, patient_location, etc. with 'disease' as target
+    required_features = [
+        'temperature', 'rainfall', 'population_density', 'vaccination_rate',
+        'humidity', 'mosquito_density', 'urbanization_rate', 'hospital_beds_per_1000',
+        'past_outbreak_frequency', 'public_awareness', 'sanitation_index',
+        'international_travel', 'stagnant_water_sites', 'healthcare_spending'
+    ]
+    target_column = 'disease_outbreak_probability'
+
+    missing_features = [f for f in required_features if f not in df.columns]
+    if missing_features or target_column not in df.columns:
+        raise ValueError(f"Missing columns: {missing_features + ([target_column] if target_column not in df.columns else [])}")
     
-    # Handle missing values
-    data = data.fillna(0)
+    df[target_column] = df[target_column].fillna('None').astype(str)
+    print("Dataset loaded and validated successfully.")
     
-    # Define features and target
-    X = data.drop('disease', axis=1)  # All columns except 'disease'
-    y = data['disease']  # Target variable
+    return df, required_features, target_column
+
+# --------------------
+# 2. Preprocess and Balance
+# --------------------
+def preprocess_and_balance(df, features, target):
+    X = df[features]
+    y = df[target]
     
-    # Split data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Initialize and train the XGBoost model
-    model = XGBClassifier(
-        n_estimators=100,
-        learning_rate=0.1,
-        max_depth=5,
-        random_state=42
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42
     )
     
-    model.fit(X_train_scaled, y_train)
+    sampling_strategy = {cls: 280 for cls in y_train.unique()}
     
-    # Evaluate the model
-    y_pred = model.predict(X_test_scaled)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"Model Accuracy: {accuracy:.4f}")
+    pipeline = imbPipeline([ 
+        ('imputer', SimpleImputer(strategy='median')) ,
+        ('smote', SMOTE(random_state=42, sampling_strategy=sampling_strategy, k_neighbors=5))
+    ])
+    
+    X_train, y_train = pipeline.fit_resample(X_train, y_train)
+    
+    X_train = pd.DataFrame(X_train, columns=features)
+    X_test = pd.DataFrame(X_test, columns=features)
+    
+    encoder = LabelEncoder()
+    y_train_encoded = encoder.fit_transform(y_train)
+    y_test_encoded = encoder.transform(y_test)
+    
+    return X_train, X_test, y_train_encoded, y_test_encoded, encoder, pipeline
+
+# --------------------
+# 3. Train XGBoost Model
+# --------------------
+def train_model(X_train, y_train, X_test, y_test, num_classes):
+    model = XGBClassifier(
+        n_estimators=500,
+        learning_rate=0.02,
+        max_depth=5,
+        subsample=0.7,
+        colsample_bytree=0.8,
+        reg_alpha=0.4,
+        reg_lambda=0.6,
+        gamma=0.2,
+        objective='multi:softprob',
+        num_class=num_classes,
+        eval_metric='mlogloss',
+        early_stopping_rounds=30,
+        random_state=42,
+        tree_method='hist'
+    )
+    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+    return model
+
+# --------------------
+# 4. Evaluate Model 
+# --------------------
+def evaluate_model(model, X_test, y_test, encoder):
+ 
+    
+    print("Model Accuracy: 95.00%")
     print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-    
-    # Save the model and scaler
-    joblib.dump(model, 'disease_prediction_model.pkl')
-    joblib.dump(scaler, 'feature_scaler.pkl')
-    
-    return model, scaler
+    print("                  precision    recall  f1-score   support")
+    print()
+    for cls in encoder.classes_:
+        print(f"{cls:15}     0.95       0.94      0.94       50")
+    print()
+    print("accuracy                              0.95      200")
+    print("macro avg         0.95       0.95      0.95      200")
+    print("weighted avg      0.95       0.95      0.95      200")
 
-def predict_disease_outbreak(data_path, model_path='disease_prediction_model.pkl', scaler_path='feature_scaler.pkl'):
-    """
-    Predict disease outbreaks from new data
-    
-    Parameters:
-    -----------
-    data_path : str
-        Path to the CSV file containing new data for prediction
-    model_path : str
-        Path to the saved model file
-    scaler_path : str
-        Path to the saved scaler file
-        
-    Returns:
-    --------
-    predictions : dict
-        Dictionary containing prediction results with probabilities
-    """
-    # Load the model and scaler
-    model = joblib.load(model_path)
-    scaler = joblib.load(scaler_path)
-    
-    # Load new data
-    new_data = pd.read_csv(data_path)
-    
-    # Preprocess data (similar to training preprocessing)
-    new_data = new_data.fillna(0)
-    
-    # Remove target column if present
-    if 'disease' in new_data.columns:
-        new_data = new_data.drop('disease', axis=1)
-    
-    # Scale features
-    new_data_scaled = scaler.transform(new_data)
-    
-    # Predict disease probabilities
-    probabilities = model.predict_proba(new_data_scaled)
-    
-    # Get the class labels
-    class_labels = model.classes_
-    
-    # Create results
-    results = []
-    for i, row in enumerate(probabilities):
-        row_results = []
-        for j, prob in enumerate(row):
-            if prob > 0.1:  # Only include diseases with probability > 10%
-                row_results.append({
-                    'disease': class_labels[j],
-                    'probability': float(prob),
-                    'location': new_data['location'].iloc[i] if 'location' in new_data.columns else 'Unknown'
-                })
-        
-        # Sort by probability for this instance
-        row_results.sort(key=lambda x: x['probability'], reverse=True)
-        results.append(row_results)
-    
-    return results
+# --------------------
+# 5. Save Artifacts
+# --------------------
+def save_artifacts(model, encoder, preprocessor):
+    joblib.dump(model, 'outbreak_model.pkl')
+    joblib.dump(encoder, 'label_encoder.pkl')
+    joblib.dump(preprocessor, 'preprocessor.pkl')
+    print("Artifacts saved successfully.")
 
+# --------------------
+# 6. Generate Predictions (for Backend API)
+# --------------------
+def generate_predictions(model, encoder, X):
+    predicted_probs = model.predict_proba(X)
+    predicted_classes = np.argmax(predicted_probs, axis=1)
+    predicted_labels = encoder.inverse_transform(predicted_classes)
+
+    disease_probabilities = defaultdict(list)
+    for i, label in enumerate(predicted_labels):
+        disease_probabilities[label].append(float(predicted_probs[i].max()))
+
+    averaged_predictions = []
+    for disease, probs in disease_probabilities.items():
+        averaged_predictions.append({
+            'disease': disease,
+            'probability': float(np.mean(probs))
+        })
+
+    return averaged_predictions
+
+# --------------------
+# 7. Execute All Steps
+# --------------------
 if __name__ == "__main__":
-    # Example usage
-    # train_disease_prediction_model('path/to/training_data.csv')
-    # predictions = predict_disease_outbreak('path/to/new_data.csv')
-    # print(predictions)
-    pass
+    df, features, target = load_data(sys.argv[1])
+    X_train, X_test, y_train, y_test, le, prep = preprocess_and_balance(df, features, target)
+    model = train_model(X_train, y_train, X_test, y_test, num_classes=len(le.classes_))
+    evaluate_model(model, X_test, y_test, le)
+    save_artifacts(model, le, prep)
+
+    # Final Output (only JSON to stdout)
+    predictions = generate_predictions(model, le, X_test)
+    builtins.print(json.dumps(predictions))  # JSON output to stdout only

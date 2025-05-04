@@ -44,36 +44,28 @@ const DonorContact = () => {
     }
   });
 
-  const searchDonors = (bloodType?: string) => {
-    if (!user?.location) {
-      toast({
-        variant: "destructive",
-        title: "Location required",
-        description: "Your location is needed to find nearby donors"
-      });
-      return;
-    }
-
+  const searchDonors = async (bloodType?: string) => {
     setIsSearching(true);
     try {
-      // Use the user's location to find nearest donors
-      const donors = findNearestDonors(user.location, bloodType);
-      setNearestDonors(donors);
-      
-      if (donors.length === 0) {
+      const nearest = await findNearestDonors(bloodType);
+
+      console.log("Nwarest",nearest);
+      setNearestDonors(nearest);
+  
+      if (nearest.length === 0) {
         toast({
           variant: "destructive",
           title: "No donors found",
-          description: bloodType 
-            ? `No donors with blood type ${bloodType} found nearby` 
+          description: bloodType
+            ? `No donors with blood type ${bloodType} found nearby`
             : "No donors found in your area"
         });
       }
-    } catch (error) {
+    } catch (err) {
       toast({
         variant: "destructive",
-        title: "Search failed",
-        description: "Error finding nearby donors"
+        title: "Error",
+        description: "Could not find donors"
       });
     } finally {
       setIsSearching(false);

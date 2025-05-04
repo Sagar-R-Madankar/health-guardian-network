@@ -49,54 +49,82 @@ const DonorRegistration = () => {
       });
       return;
     }
-
+  
     setIsSubmitting(true);
-    try {
-      // Mock getting geolocation from address
-      // In a real app, you would use a geocoding service (Google Maps, Mapbox, etc.)
-      const mockGeocoding = () => {
-        return {
-          lat: 37.7749 + (Math.random() - 0.5) * 0.1,
-          lng: -122.4194 + (Math.random() - 0.5) * 0.1
-        };
-      };
-      
-      const location = mockGeocoding();
-      
-      // Add donor to the system
-      addDonor({
-        name: user.name,
-        email: user.email,
-        bloodType: data.bloodType,
-        organDonor: data.organDonor,
-        location: {
-          ...location,
-          address: data.address
-        },
-        phone: data.phone
-      });
-      
-      // Update user profile
-      updateUserProfile({
-        isDonor: true,
-        bloodType: data.bloodType,
-        organDonor: data.organDonor
-      });
-      
-      setIsSuccess(true);
-      toast({
-        title: "Registration successful",
-        description: "Thank you for registering as a donor"
-      });
-    } catch (error) {
+  
+    // First, get the user's location
+    if (!navigator.geolocation) {
       toast({
         variant: "destructive",
-        title: "Registration failed",
-        description: "There was a problem registering you as a donor"
+        title: "Geolocation not supported",
+        description: "Your browser does not support geolocation"
       });
-    } finally {
       setIsSubmitting(false);
+      return;
     }
+  
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+  
+        try {
+          const response = await fetch("http://localhost:5000/api/donors", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+            body: JSON.stringify({
+              bloodType: data.bloodType,
+              organDonor: data.organDonor,
+              phone: data.phone,
+              address: data.address,
+              lat,
+              lng,
+            }),
+          });
+  
+          const result = await response.json();
+  
+          if (!response.ok) {
+            throw new Error(result.message || "Failed to register as donor");
+          }
+  
+          // Update frontend profile
+          updateUserProfile({
+            isDonor: true,
+            bloodType: data.bloodType,
+            organDonor: data.organDonor,
+          });
+  
+          setIsSuccess(true);
+          toast({
+            title: "Registration successful",
+            description: "Thank you for registering as a donor"
+          });
+
+          window.location.reload();
+        } catch (error) {
+          toast({
+            variant: "destructive",
+            title: "Registration failed",
+            description: (error as Error).message || "There was a problem registering you as a donor"
+          });
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+      (error) => {
+        console.error("Error getting location:", error);
+        setIsSubmitting(false);
+        toast({
+          variant: "destructive",
+          title: "Location error",
+          description: "Unable to get your location. Please check your browser permissions."
+        });
+      }
+    );
   };
 
   if (isSuccess) {

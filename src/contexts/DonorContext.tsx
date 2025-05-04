@@ -21,63 +21,42 @@ type DonorContextType = {
   donors: Donor[];
   loading: boolean;
   addDonor: (donor: Omit<Donor, 'id'>) => void;
-  findNearestDonors: (location: {lat: number, lng: number}, bloodType?: string, limit?: number) => Donor[];
+  findNearestDonors: (bloodType?: string, limit?: number) => Promise<Donor[]>; // ← fix here
   contactDonor: (donorId: string, message: string) => Promise<void>;
 };
 
 const DonorContext = createContext<DonorContextType | undefined>(undefined);
 
 // Mock data
-const initialDonors: Donor[] = [
-  {
-    id: '1',
-    name: 'John Doe',
-    email: 'john@example.com',
-    bloodType: 'O+',
-    organDonor: true,
-    location: {
-      lat: 37.7749,
-      lng: -122.4194,
-      address: '123 Main St, San Francisco, CA'
-    },
-    phone: '555-123-4567',
-    lastDonation: '2025-01-15'
-  },
-  {
-    id: '2',
-    name: 'Jane Smith',
-    email: 'jane@example.com',
-    bloodType: 'A-',
-    organDonor: false,
-    location: {
-      lat: 37.7833,
-      lng: -122.4167,
-      address: '456 Market St, San Francisco, CA'
-    },
-    phone: '555-987-6543',
-    lastDonation: '2025-03-10'
-  },
-  {
-    id: '3',
-    name: 'Bob Johnson',
-    email: 'bob@example.com',
-    bloodType: 'B+',
-    organDonor: true,
-    location: {
-      lat: 37.7694,
-      lng: -122.4862,
-      address: '789 Sunset Blvd, San Francisco, CA'
-    },
-    phone: '555-456-7890'
-  }
-];
+
 
 export const DonorProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [donors, setDonors] = useState<Donor[]>(initialDonors);
+  const [donors, setDonors] = useState<Donor[]>();
   const [loading, setLoading] = useState(false);
 
   // Load donors from localStorage on mount
+   const getUserLocation = (): Promise<{ lat: number; lng: number }> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject("Geolocation not supported");
+      }
+  
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+        },
+        error => {
+          reject("Location permission denied or error occurred");
+        }
+      );
+    });
+  };
+  
   useEffect(() => {
+    
     const savedDonors = localStorage.getItem('donors');
     if (savedDonors) {
       setDonors(JSON.parse(savedDonors));
@@ -99,64 +78,88 @@ export const DonorProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // Haversine formula to calculate distance between two points
-  const calculateDistance = (
-    lat1: number, 
-    lon1: number, 
-    lat2: number, 
+    const getDistanceInKm = (
+    lat1: number,
+    lon1: number,
+    lat2: number,
     lon2: number
   ): number => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    const distance = R * c; // Distance in km
-    return distance;
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   };
-
-  const findNearestDonors = (
-    location: {lat: number, lng: number}, 
-    bloodType?: string, 
+  const findNearestDonors = async (
+    bloodType?: string,
     limit: number = 5
-  ): Donor[] => {
-    // Filter donors by blood type if provided
-    let filteredDonors = bloodType 
-      ? donors.filter(donor => donor.bloodType === bloodType)
-      : [...donors];
-    
-    // Calculate distance for each donor
-    filteredDonors = filteredDonors.map(donor => ({
-      ...donor,
-      distance: calculateDistance(
-        location.lat, 
-        location.lng, 
-        donor.location.lat, 
-        donor.location.lng
-      )
-    }));
-    
-    // Sort by distance
-    filteredDonors.sort((a, b) => (a.distance || 0) - (b.distance || 0));
-    
-    // Return limited number of donors
-    return filteredDonors.slice(0, limit);
+  ): Promise<Donor[]> => {
+    try {
+      const userLocation = await getUserLocation();
+  
+      const queryParams = new URLSearchParams();
+      if (bloodType) queryParams.append("bloodType", bloodType);
+      console.log("Token", localStorage.getItem("token"));
+  
+      const res = await fetch(`/api/donors?${queryParams.toString()}`, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        }
+      });
+      const text = await res.text(); // Get raw response
+console.log("Raw Response:", text);
+
+  
+const data = JSON.parse(text); // ✅ Now it's a JS object
+console.log("Parsed Data:", data);
+      
+      if (!res.ok) throw new Error(data.message || "Error fetching donors");
+  
+      const donorsWithDistance = data.donors.map((donor: Donor) => {
+        const distance = getDistanceInKm(
+          userLocation.lat,
+          userLocation.lng,
+          donor.location.lat,
+          donor.location.lng
+        );
+        return { ...donor, distance };
+      });
+  
+      donorsWithDistance.sort((a, b) => a.distance - b.distance);
+      return donorsWithDistance.slice(0, limit);
+  
+    } catch (error) {
+      console.error("Error finding donors:", error);
+      throw error;
+    }
   };
+  
 
   const contactDonor = async (donorId: string, message: string): Promise<void> => {
     setLoading(true);
     try {
-      // In a real app, this would send a request to your Node.js backend
-      // which would handle SMS/email notification
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      console.log(`Message sent to donor ${donorId}: ${message}`);
-      // In production, this would update a notifications table in MySQL
-      
+      const token = localStorage.getItem("token"); // or however you're storing the JWT
+  
+      const response = await fetch(`http://localhost:8080/api/donors/${donorId}/contact`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` // 🔑 Attach token here
+        },
+        body: JSON.stringify({ message }),
+      });
+  
+      if (!response.ok) {
+        throw new Error('Failed to contact donor');
+      }
+  
+      console.log(`Successfully sent message to donor ${donorId}`);
     } catch (error) {
       console.error('Error contacting donor:', error);
       throw error;
@@ -164,6 +167,7 @@ export const DonorProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLoading(false);
     }
   };
+  
 
   return (
     <DonorContext.Provider value={{

@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -23,7 +22,7 @@ type AuthContextType = {
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   setUserLocation: (lat: number, lng: number) => void;
-  updateUserProfile: (userData: Partial<User>) => void;
+  updateUserProfile: (userData: Partial<User>) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,44 +45,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     setLoading(true);
     try {
-      // Mock API call
-      // In reality, this would be a fetch request to your Node.js backend
-      // that would verify the credentials against the MySQL database
-      
-      // Simulating API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock admin user
-      if (email === 'admin@example.com' && password === 'password') {
-        const adminUser: User = {
-          id: '1',
-          name: 'Admin User',
-          email: 'admin@example.com',
-          role: 'admin',
-          isDonor: false
-        };
-        setUser(adminUser);
-        localStorage.setItem('user', JSON.stringify(adminUser));
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+
+      const loggedInUser: User = {
+        id: data.user.id,
+        name: data.user.name,
+        email: data.user.email,
+        role: data.user.role,
+        isDonor: false, // You can update this if your backend provides this info
+      };
+
+      setUser(loggedInUser);
+      localStorage.setItem('user', JSON.stringify(loggedInUser));
+      localStorage.setItem('token', data.token); // Store JWT token
+
+      // Redirect based on role
+      if (data.user.role === 'admin') {
         navigate('/admin/dashboard');
-        return;
-      }
-      
-      // Mock regular user
-      if (email === 'user@example.com' && password === 'password') {
-        const regularUser: User = {
-          id: '2',
-          name: 'Regular User',
-          email: 'user@example.com',
-          role: 'user',
-          isDonor: false
-        };
-        setUser(regularUser);
-        localStorage.setItem('user', JSON.stringify(regularUser));
+      } else {
         navigate('/dashboard');
-        return;
       }
-      
-      throw new Error('Invalid credentials');
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
@@ -96,27 +89,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, password: string) => {
     setLoading(true);
     try {
-      // Mock API call
-      // In reality, this would be a fetch request to your Node.js backend
-      // that would create a new user in the MySQL database
-      
-      // Simulating API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const response = await fetch('http://localhost:5000/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Registration failed');
+      }
+
       const newUser: User = {
-        id: Math.random().toString(36).substring(2, 15),
-        name,
-        email,
-        role: 'user',
-        isDonor: false
+        id: data.user.id,
+        name: data.user.name,
+        email: data.user.email,
+        role: data.user.role,
+        isDonor: false, // Optional - you can update this based on backend if available
       };
-      
+
       setUser(newUser);
       localStorage.setItem('user', JSON.stringify(newUser));
+      localStorage.setItem('token', data.token); // Store JWT token if needed
+
       navigate('/dashboard');
     } catch (error) {
       console.error('Registration failed:', error);
-      throw error;
     } finally {
       setLoading(false);
     }
@@ -125,41 +126,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     setUser(null);
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
     navigate('/login');
   };
 
+  // Update user location
   const setUserLocation = (lat: number, lng: number) => {
     if (user) {
       const updatedUser = {
         ...user,
-        location: { lat, lng }
+        location: { lat, lng },
       };
       setUser(updatedUser);
       localStorage.setItem('user', JSON.stringify(updatedUser));
     }
   };
 
-  const updateUserProfile = (userData: Partial<User>) => {
+  // Update user profile by calling the backend API
+  const updateUserProfile = async (userData: Partial<User>) => {
     if (user) {
-      const updatedUser = {
-        ...user,
-        ...userData
-      };
-      setUser(updatedUser);
-      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setLoading(true);
+    
+
+    
+       
     }
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      loading, 
-      login, 
-      register, 
-      logout,
-      setUserLocation,
-      updateUserProfile
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login,
+        register,
+        logout,
+        setUserLocation,
+        updateUserProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

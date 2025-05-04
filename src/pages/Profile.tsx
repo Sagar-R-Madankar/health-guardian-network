@@ -1,13 +1,16 @@
-
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/contexts/AuthContext";
 import Navbar from "@/components/layout/Navbar";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  Form, FormControl, FormField, FormItem, FormLabel, FormMessage
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { MapPin } from "lucide-react";
@@ -20,7 +23,7 @@ const profileSchema = z.object({
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
 const Profile = () => {
-  const { user, updateUserProfile, setUserLocation } = useAuth();
+  const { user, setUserLocation, updateUserProfile } = useAuth();
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
@@ -30,10 +33,9 @@ const Profile = () => {
     defaultValues: {
       name: user?.name || "",
       email: user?.email || "",
-    }
+    },
   });
 
-  // Update form values when user changes
   useEffect(() => {
     if (user) {
       form.reset({
@@ -43,23 +45,35 @@ const Profile = () => {
     }
   }, [user, form]);
 
-  const onSubmit = (data: ProfileFormValues) => {
+  const onSubmit = async (data: ProfileFormValues) => {
     setIsSaving(true);
     try {
-      updateUserProfile({
-        name: data.name,
-        email: data.email,
+      const response = await fetch('http://localhost:5000/api/user', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({
+          name: data.name,
+          email: data.email,
+          location: user?.location || null,
+        }),
       });
-      
+
+      if (!response.ok) throw new Error("Update failed");
+
+      // Update user context with the new values
+      updateUserProfile({ name: data.name, email: data.email });
       toast({
         title: "Profile updated",
-        description: "Your profile has been updated successfully"
+        description: "Your profile has been updated successfully",
       });
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Update failed",
-        description: "There was a problem updating your profile"
+        description: "There was a problem updating your profile",
       });
     } finally {
       setIsSaving(false);
@@ -70,13 +84,43 @@ const Profile = () => {
     if (navigator.geolocation) {
       setIsGettingLocation(true);
       navigator.geolocation.getCurrentPosition(
-        position => {
-          setUserLocation(position.coords.latitude, position.coords.longitude);
-          setIsGettingLocation(false);
-          toast({
-            title: "Location updated",
-            description: "Your location has been successfully updated"
-          });
+        async position => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          setUserLocation(lat, lng);
+
+          try {
+            const response = await fetch('/api/user', {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${localStorage.getItem("token")}`,
+              },
+              body: JSON.stringify({
+                name: user?.name,
+                email: user?.email,
+                location: { lat, lng },
+              }),
+            });
+
+            if (!response.ok) throw new Error("Failed to update location");
+
+            // Update user context with new location
+            updateUserProfile({ location: { lat, lng } });
+
+            toast({
+              title: "Location updated",
+              description: "Your location has been successfully updated",
+            });
+          } catch (error) {
+            toast({
+              variant: "destructive",
+              title: "Location update failed",
+              description: "Unable to update your location",
+            });
+          } finally {
+            setIsGettingLocation(false);
+          }
         },
         error => {
           console.error("Error getting location:", error);
@@ -84,7 +128,7 @@ const Profile = () => {
           toast({
             variant: "destructive",
             title: "Location error",
-            description: "Unable to get your location. Please check your browser permissions."
+            description: "Unable to get your location. Please check your browser permissions.",
           });
         }
       );
@@ -92,29 +136,24 @@ const Profile = () => {
       toast({
         variant: "destructive",
         title: "Geolocation not supported",
-        description: "Your browser does not support geolocation"
+        description: "Your browser does not support geolocation",
       });
     }
   };
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1 container py-8">
         <h1 className="text-3xl font-bold mb-8">Profile Settings</h1>
-        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="md:col-span-2">
             <Card>
               <CardHeader>
                 <CardTitle>Profile Information</CardTitle>
-                <CardDescription>
-                  Update your account details
-                </CardDescription>
+                <CardDescription>Update your account details</CardDescription>
               </CardHeader>
               <CardContent>
                 <Form {...form}>
@@ -132,7 +171,6 @@ const Profile = () => {
                         </FormItem>
                       )}
                     />
-                    
                     <FormField
                       control={form.control}
                       name="email"
@@ -146,7 +184,6 @@ const Profile = () => {
                         </FormItem>
                       )}
                     />
-                    
                     <div>
                       <FormLabel>Role</FormLabel>
                       <div className="mt-1">
@@ -156,7 +193,6 @@ const Profile = () => {
                         Your account role cannot be changed
                       </p>
                     </div>
-                    
                     <Button type="submit" disabled={isSaving}>
                       {isSaving ? "Saving..." : "Save Changes"}
                     </Button>
@@ -165,14 +201,12 @@ const Profile = () => {
               </CardContent>
             </Card>
           </div>
-          
+
           <div className="space-y-8">
             <Card>
               <CardHeader>
                 <CardTitle>Your Location</CardTitle>
-                <CardDescription>
-                  Update your location settings
-                </CardDescription>
+                <CardDescription>Update your location settings</CardDescription>
               </CardHeader>
               <CardContent>
                 {user.location ? (
@@ -195,7 +229,7 @@ const Profile = () => {
                 )}
               </CardContent>
               <CardFooter>
-                <Button 
+                <Button
                   onClick={handleGetLocation}
                   disabled={isGettingLocation}
                   className="w-full"
@@ -204,13 +238,11 @@ const Profile = () => {
                 </Button>
               </CardFooter>
             </Card>
-            
+
             <Card>
               <CardHeader>
                 <CardTitle>Donor Status</CardTitle>
-                <CardDescription>
-                  Your current donor registration status
-                </CardDescription>
+                <CardDescription>Your current donor registration status</CardDescription>
               </CardHeader>
               <CardContent className="text-center py-2">
                 {user.isDonor ? (
@@ -218,11 +250,9 @@ const Profile = () => {
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-auto text-red-500 mb-2">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
                     </svg>
-                    <p className="font-medium">
-                      Registered Donor
-                    </p>
+                    <p className="font-medium">Registered Donor</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {user.bloodType && `Blood Type: ${user.bloodType}`}
+                      {user.bloodType && `Blood Type: ${user.bloodType}`}{' '}
                       {user.bloodType && user.organDonor && ' | '}
                       {user.organDonor && 'Organ Donor'}
                     </p>
@@ -239,11 +269,7 @@ const Profile = () => {
                 )}
               </CardContent>
               <CardFooter>
-                <Button 
-                  asChild
-                  variant="outline"
-                  className="w-full"
-                >
+                <Button asChild variant="outline" className="w-full">
                   <a href="/donor-registration">
                     {user.isDonor ? "Update Donor Info" : "Register as Donor"}
                   </a>
